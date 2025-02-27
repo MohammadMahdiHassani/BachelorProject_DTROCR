@@ -20,83 +20,15 @@ from transformers.generation.stopping_criteria import (
     StopStringCriteria,
 )
 
-class DTrOCRRNNTModel(nn.Module):
-    def __init__(self, config: DTrOCRConfig):
+class RNNTLoss(nn.Module):
+    def __init__(self):
         super().__init__()
-        
-        # Vision Transformer (ViT) for image feature extraction
-        self.patch_embeddings = ViTPatchEmbeddings(config)
-        
-        # RNN-based Encoder for processing image features
-        self.rnn_encoder = nn.LSTM(config.hidden_size, config.hidden_size, batch_first=True, bidirectional=True)
-        
-        # RNN Decoder for sequence generation
-        self.rnn_decoder = nn.LSTM(config.hidden_size * 2, config.hidden_size, batch_first=True)
-        
-        # Output layer for sequence prediction
-        self.output_layer = nn.Linear(config.hidden_size, config.vocab_size)
-        
-    def forward(self, pixel_values, input_ids, labels=None):
-        """
-        Forward pass for the RNNT model. 
-        - pixel_values: Input image tensor
-        - input_ids: Tokenized text input
-        - labels: Ground truth text sequences for computing RNNT loss
-        """
-        
-        # Step 1: Extract image features using ViT
-        image_features = self.patch_embeddings(pixel_values)
-        
-        # Step 2: Process image features with RNN encoder (Bi-directional LSTM)
-        rnn_out, _ = self.rnn_encoder(image_features)
-        
-        # Step 3: Decode sequence output using RNN decoder
-        decoder_out, _ = self.rnn_decoder(rnn_out)
-        
-        # Step 4: Pass decoder output through the final output layer to get logits
-        logits = self.output_layer(decoder_out)
-        
-        # If labels are provided, compute RNNT loss (explained below)
-        if labels is not None:
-            loss = self.compute_rnnt_loss(logits, labels)
-            return logits, loss
-        
-        return logits
-    
-    def compute_rnnt_loss(self, logits, labels):
-        """
-        Compute the RNNT loss.
-        The RNNT loss function will calculate the error between the predicted logits
-        and the ground truth labels. We will use a simple version of RNNT loss here.
-        
-        Args:
-        - logits (Tensor): Logits produced by the model (Batch x Time x Vocab Size)
-        - labels (Tensor): Ground truth labels (Batch x Max Sequence Length)
-        
-        Returns:
-        - loss (Tensor): The computed RNNT loss value
-        """
-        
-        # Reshape logits and labels for RNNT loss computation
-        logits = logits.log_softmax(dim=-1)  # Apply log-softmax to logits for RNNT
-        
-        # Calculate the RNNT loss using CTC (Connectionist Temporal Classification) based method
-        # Note: In practice, you might want to implement a custom RNNT loss or use an existing library.
-        
-        # We need a more specialized implementation for the transducer-style loss.
-        # Placeholder for RNNT loss computation (you can integrate warp-ctc or your custom RNNT function here).
-        
-        # For now, we will assume you are using CTC as a simple placeholder for RNNT.
-        loss_fct = nn.CTCLoss(blank=0, reduction='mean')
-        
-        # Here, `logits` is of shape (T, N, C) for (time steps, batch size, vocab size)
-        # `labels` should be reshaped to match the output of the CTC loss function
-        input_lengths = torch.full((logits.size(1),), logits.size(0), dtype=torch.long)
-        target_lengths = torch.full((labels.size(0),), labels.size(1), dtype=torch.long)
-        
-        loss = loss_fct(logits.transpose(0, 1), labels, input_lengths, target_lengths)
-        
-        return loss
+
+    def forward(self, logits, targets, input_lengths, target_lengths):
+        # Placeholder RNNT loss (use warp-rnnt for production)
+        B, T, L, V = logits.size()
+        loss = nn.functional.cross_entropy(logits.view(-1, V), targets.view(-1), reduction='sum')
+        return loss / B  # Simplified; replace with proper RNNT loss implementation
 
 class DTrOCRModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
@@ -106,9 +38,18 @@ class DTrOCRModel(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
-        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers)])
+        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers) // 2])
         self.dropout = nn.Dropout(config.attn_pdrop)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+
+        self.pred_net = nn.LSTM(
+            input_size=config.hidden_size,
+            hidden_size=config.rnn_hidden_size,
+            num_layers=config.rnn_num_layers,
+            batch_first=True,
+            bidirectional=False
+        )
+        self.pred_norm = nn.LayerNorm(config.rnn_hidden_size)
 
         self._attn_implementation = config._attn_implementation
 
@@ -188,9 +129,21 @@ class DTrOCRModel(nn.Module):
             if use_cache is True:
                 presents = presents + (outputs[1],)
 
-        hidden_states = self.layer_norm(hidden_states)
+        
 
-        return DTrOCRModelOutput(hidden_states=hidden_states, past_key_values=presents)
+        encoder_outputs = self.layer_norm(hidden_states)
+
+        # Prediction Network (RNNT)
+        pred_input = self.token_embedding(input_ids)  # Use token embeddings directly
+        pred_output, _ = self.pred_net(pred_input)
+        prediction_outputs = self.pred_norm(pred_output)
+
+        return DTrOCRModelOutput(
+            hidden_states=encoder_outputs,
+            past_key_values=presents,
+            encoder_outputs=encoder_outputs,
+            prediction_outputs=prediction_outputs
+        )
 
     def initialise_weights(self, config: DTrOCRConfig) -> None:
         # load pre-trained GPT-2
@@ -208,10 +161,16 @@ class DTrOCRLMHeadModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
         self.config = config
-
-        self.transformer = DTrOCRRNNTModel(config)
+        self.transformer = DTrOCRModel(config)
         self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+# RNNT Joint Network
+        self.joint_net = nn.Sequential(
+            nn.Linear(config.hidden_size + config.rnn_hidden_size, config.rnn_hidden_size),
+            nn.ReLU(),
+            nn.Linear(config.rnn_hidden_size, config.vocab_size)
+        )
+        self.rnnt_loss_fn = RNNTLoss()
         image_size, patch_size = config.image_size, config.patch_size
         self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
 
@@ -234,6 +193,15 @@ class DTrOCRLMHeadModel(nn.Module):
             use_cache=use_cache
         )
         logits = self.language_model_head(transformer_output.hidden_states)
+
+        # RNNT Path
+        encoder_outputs = transformer_output.encoder_outputs
+        prediction_outputs = transformer_output.prediction_outputs
+        T, L = encoder_outputs.size(1), prediction_outputs.size(1)
+        enc_expanded = encoder_outputs.unsqueeze(2).repeat(1, 1, L, 1)
+        pred_expanded = prediction_outputs.unsqueeze(1).repeat(1, T, 1, 1)
+        joint_input = torch.cat([enc_expanded, pred_expanded], dim=-1)
+        rnnt_logits = self.joint_net(joint_input)
 
         loss, accuracy = None, None
         if labels is not None:
@@ -264,7 +232,8 @@ class DTrOCRLMHeadModel(nn.Module):
             loss=loss,
             logits=logits,
             accuracy=accuracy,
-            past_key_values=transformer_output.past_key_values
+            past_key_values=transformer_output.past_key_values,
+            rnnt_logits=rnnt_logits
         )
 
     @torch.no_grad()
