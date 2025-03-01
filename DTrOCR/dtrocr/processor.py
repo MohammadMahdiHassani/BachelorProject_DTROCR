@@ -28,19 +28,28 @@ class DTrOCRProcessor:
         texts: Union[str, List[str]] = None,
         return_labels: bool = False,
         input_data_format: str = 'channels_last',
-        padding: Union[bool, str] = 'max_length',  # Changed to max_length for RNNT
+        padding: Union[bool, str] = 'max_length',
+        return_tensors: str = 'pt',  # Default to 'pt', but allow override
         *args,
         **kwargs
     ) -> DTrOCRProcessorOutput:
+        # Remove return_tensors from kwargs if provided to avoid duplication
+        tokenizer_kwargs = {k: v for k, v in kwargs.items() if k != 'return_tensors'}
         text_inputs = self.tokeniser(
-            texts, padding=padding, truncation=True, return_tensors='pt', *args, **kwargs
+            texts,
+            padding=padding,
+            truncation=True,
+            return_tensors=return_tensors,
+            **tokenizer_kwargs
         ) if texts is not None else None
 
         image_inputs = self.vit_processor(
-            images, input_data_format=input_data_format, return_tensors='pt', *args, **kwargs
+            images,
+            input_data_format=input_data_format,
+            return_tensors=return_tensors,
+            **kwargs
         ) if images is not None else None
 
-        # Compute target lengths for RNNT (non-pad token count)
         target_lengths = None
         if text_inputs is not None and 'attention_mask' in text_inputs:
             target_lengths = text_inputs['attention_mask'].sum(dim=-1)
