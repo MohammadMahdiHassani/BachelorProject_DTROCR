@@ -7,6 +7,7 @@ from processor import DTrOCRProcessor
 from data import DTrOCRLMHeadModelOutput, DTrOCRModelOutput, DTrOCRProcessorOutput
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
+from transformers import AutoModelForVision2Seq
 from transformers.generation.logits_process import LogitsProcessorList
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block, GPT2Model
 from transformers.generation.configuration_utils import GenerationConfig
@@ -24,8 +25,16 @@ from transformers.generation.stopping_criteria import (
 class DTrOCRModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
+# Load Qwen2.5-VL model and extract its vision encoder
+        qwen_vl_model = AutoModelForVision2Seq.from_pretrained(
+            config.qwen_vl_hf_model,
+            trust_remote_code=True
+        )
+        self.patch_embeddings = qwen_vl_model.vision_model  # Qwen2.5-VL’s ViT encoder
+        self.vision_projection = nn.Linear(1280, config.hidden_size)  # Project Qwen2.5-VL output to GPT-2 hidden size
+
+
         # embeddings
-        self.patch_embeddings = ViTPatchEmbeddings(config)
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
@@ -57,9 +66,20 @@ class DTrOCRModel(nn.Module):
         else:
             past_length = past_key_values[0][0].size(-2)
 
-        patch_embeddings = self.patch_embeddings(pixel_values) if past_length == 0 else None
+        # Vision encoding with Qwen2.5-VL
+        if past_length == 0:
+            vision_outputs = self.patch_embeddings(pixel_values)  # [batch_size, num_patches, 1280]
+            patch_embeddings = self.vision_projection(vision_outputs.last_hidden_state)  # Project to hidden_size
+        else:
+            patch_embeddings = None
         token_embeddings = self.token_embedding(input_ids)
 
+
+
+        # Debugging shapes
+        if patch_embeddings is not None:
+            print("Shape of patch embeddings:", patch_embeddings.shape)  # e.g., [batch_size, 196, 768]
+            print("Shape of token embeddings:", token_embeddings.shape)  # e.g., [batch_size, seq_len, 768]
         if patch_embeddings is not None:
             patch_and_token_embeddings = torch.concat([patch_embeddings, token_embeddings], dim=-2)
         else:
@@ -72,7 +92,8 @@ class DTrOCRModel(nn.Module):
         else:
             position_ids = torch.ones_like(position_ids, device=position_ids.device) * past_length
         position_embeddings = self.positional_embedding(position_ids)
-
+        print("patch and token embedding: ")
+        print(patch_and_token_embeddings.shape)
         hidden_states = patch_and_token_embeddings + position_embeddings
         hidden_states = self.dropout(hidden_states)
 
@@ -133,7 +154,7 @@ class DTrOCRLMHeadModel(nn.Module):
         self.config = config
 
         self.transformer = DTrOCRModel(config)
-        self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False) #? this part should be trainable
 
         image_size, patch_size = config.image_size, config.patch_size
         self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
