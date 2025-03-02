@@ -20,15 +20,6 @@ from transformers.generation.stopping_criteria import (
     StopStringCriteria,
 )
 
-class RNNTLoss(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, logits, targets, input_lengths, target_lengths):
-        # Placeholder RNNT loss (use warp-rnnt for production)
-        B, T, L, V = logits.size()
-        loss = nn.functional.cross_entropy(logits.view(-1, V), targets.view(-1), reduction='sum')
-        return loss / B  # Simplified; replace with proper RNNT loss implementation
 
 class DTrOCRModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
@@ -38,18 +29,9 @@ class DTrOCRModel(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
-        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers // 2)])
+        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers)])
         self.dropout = nn.Dropout(config.attn_pdrop)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
-
-        self.pred_net = nn.LSTM(
-            input_size=config.hidden_size,
-            hidden_size=config.rnn_hidden_size,
-            num_layers=config.rnn_num_layers,
-            batch_first=True,
-            bidirectional=False
-        )
-        self.pred_norm = nn.LayerNorm(config.rnn_hidden_size)
 
         self._attn_implementation = config._attn_implementation
 
@@ -74,13 +56,10 @@ class DTrOCRModel(nn.Module):
             past_key_values = tuple([None] * len(self.hidden_layers))
         else:
             past_length = past_key_values[0][0].size(-2)
-    
-        print("pixel_values: " + pixel_values.shape)
-        print("input_ids: " + input_ids.shape) 
+
         patch_embeddings = self.patch_embeddings(pixel_values) if past_length == 0 else None
         token_embeddings = self.token_embedding(input_ids)
-        print("patch_embeddings: " + patch_embeddings.shape)
-        print("token_embeddings: " + token_embeddings.shape)
+
         if patch_embeddings is not None:
             patch_and_token_embeddings = torch.concat([patch_embeddings, token_embeddings], dim=-2)
         else:
@@ -132,21 +111,9 @@ class DTrOCRModel(nn.Module):
             if use_cache is True:
                 presents = presents + (outputs[1],)
 
-        
+        hidden_states = self.layer_norm(hidden_states)
 
-        encoder_outputs = self.layer_norm(hidden_states)
-        print("hidden_state: " + hidden_states.shape)
-        # Prediction Network (RNNT)
-        pred_input = self.token_embedding(input_ids)  # Use token embeddings directly
-        pred_output, _ = self.pred_net(pred_input)
-        prediction_outputs = self.pred_norm(pred_output)
-
-        return DTrOCRModelOutput(
-            hidden_states=encoder_outputs,
-            past_key_values=presents,
-            encoder_outputs=encoder_outputs,
-            prediction_outputs=prediction_outputs
-        )
+        return DTrOCRModelOutput(hidden_states=hidden_states, past_key_values=presents)
 
     def initialise_weights(self, config: DTrOCRConfig) -> None:
         # load pre-trained GPT-2
@@ -164,16 +131,10 @@ class DTrOCRLMHeadModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
         self.config = config
+
         self.transformer = DTrOCRModel(config)
         self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-# RNNT Joint Network
-        self.joint_net = nn.Sequential(
-            nn.Linear(config.hidden_size + config.rnn_hidden_size, config.rnn_hidden_size),
-            nn.ReLU(),
-            nn.Linear(config.rnn_hidden_size, config.vocab_size)
-        )
-        self.rnnt_loss_fn = RNNTLoss()
         image_size, patch_size = config.image_size, config.patch_size
         self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
 
@@ -196,15 +157,6 @@ class DTrOCRLMHeadModel(nn.Module):
             use_cache=use_cache
         )
         logits = self.language_model_head(transformer_output.hidden_states)
-
-        # RNNT Path
-        encoder_outputs = transformer_output.encoder_outputs
-        prediction_outputs = transformer_output.prediction_outputs
-        T, L = encoder_outputs.size(1), prediction_outputs.size(1)
-        enc_expanded = encoder_outputs.unsqueeze(2).repeat(1, 1, L, 1)
-        pred_expanded = prediction_outputs.unsqueeze(1).repeat(1, T, 1, 1)
-        joint_input = torch.cat([enc_expanded, pred_expanded], dim=-1)
-        rnnt_logits = self.joint_net(joint_input)
 
         loss, accuracy = None, None
         if labels is not None:
@@ -235,8 +187,7 @@ class DTrOCRLMHeadModel(nn.Module):
             loss=loss,
             logits=logits,
             accuracy=accuracy,
-            past_key_values=transformer_output.past_key_values,
-            rnnt_logits=rnnt_logits
+            past_key_values=transformer_output.past_key_values
         )
 
     @torch.no_grad()

@@ -1,5 +1,6 @@
 from typing import Optional, Union, Tuple, List, Literal
 
+
 class DTrOCRConfig:
     def __init__(
         self,
@@ -17,11 +18,7 @@ class DTrOCRConfig:
         embd_pdrop: Optional[float] = 0.1,
         attn_pdrop: Optional[float] = 0.1,
         layer_norm_epsilon: Optional[float] = 1e-5,
-        attn_implementation: Literal['sdpa', 'flash_attention_2'] = 'sdpa',
-        # RNNT-specific parameters
-        rnn_hidden_size: Optional[int] = 256,
-        rnn_num_layers: Optional[int] = 2,
-        use_rnnt_loss: Optional[bool] = True  # Toggle RNNT loss vs. cross-entropy
+        attn_implementation: Literal['sdpa', 'flash_attention_2'] = 'sdpa'
     ):
         self.gpt2_hf_model = gpt2_hf_model
         self.vit_hf_model = vit_hf_model
@@ -38,12 +35,8 @@ class DTrOCRConfig:
         self.attn_pdrop = attn_pdrop
         self.layer_norm_epsilon = layer_norm_epsilon
         self._attn_implementation = attn_implementation
-        # RNNT parameters
-        self.rnn_hidden_size = rnn_hidden_size
-        self.rnn_num_layers = rnn_num_layers
-        self.use_rnnt_loss = use_rnnt_loss
 
-        # GPT-2 config values
+        # other GPT2 config values
         self.n_inner = None
         self.scale_attn_weights = True
         self.scale_attn_by_inverse_layer_idx = False
