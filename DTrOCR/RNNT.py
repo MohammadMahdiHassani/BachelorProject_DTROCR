@@ -106,7 +106,7 @@ def collate_fn(batch):
 def main():
     # Assuming `words` is your list of Word objects
     words = [
-        Word(id='a01-000u', file_path=Path('/content/iam_words/words/a01/a01-000u/a01-000u-00-00.png'), writer_id='000', transcription='A')
+        Word(id='a01-000u', file_path=Path('./iam_words/words/a01/a01-000u/a01-000u-00-00.png'), writer_id='000', transcription='A')
     ]
     vocab = create_vocab(words)
     dataset = HandwritingDataset(words, vocab, transform=transforms.ToTensor())

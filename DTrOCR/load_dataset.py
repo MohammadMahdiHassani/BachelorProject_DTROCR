@@ -14,7 +14,7 @@ class Word:
                 f"writer_id='{self.writer_id}', transcription='{self.transcription}')")
 
 # The input string (as an example)
-input_string = "Word(id='a01-000u', file_path=PosixPath('/content/iam_words/words/a01/a01-000u/a01-000u-00-00.png'), writer_id='000', transcription='A') /"
+input_string = "Word(id='a01-000u', file_path=PosixPath('./iam_words/words/a01/a01-000u/a01-000u-00-00.png'), writer_id='000', transcription='A') /"
 
 # Regular expression to extract the components
 pattern = r"Word\(id='([^']+)',\s*file_path=PosixPath\('([^']+)'\),\s*writer_id='([^']+)',\s*transcription='([^']+)'\)"
