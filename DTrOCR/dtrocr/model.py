@@ -8,6 +8,7 @@ from data import DTrOCRLMHeadModelOutput, DTrOCRModelOutput, DTrOCRProcessorOutp
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
 from transformers import AutoModelForVision2Seq
+from transformers import ViTModel  # For DINO ViT
 from transformers.generation.logits_process import LogitsProcessorList
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block, GPT2Model
 from transformers.generation.configuration_utils import GenerationConfig
@@ -25,12 +26,13 @@ from transformers.generation.stopping_criteria import (
 class DTrOCRModel(nn.Module):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
-# Load Qwen2.5-VL model and extract its vision encoder
-        qwen_vl_model = AutoModelForVision2Seq.from_pretrained(
-            config.qwen_vl_hf_model,
-            trust_remote_code=True
-        )
-        self.patch_embeddings = qwen_vl_model.vision_model  # Qwen2.5-VL’s ViT encoder
+# # Load Qwen2.5-VL model and extract its vision encoder
+#         qwen_vl_model = AutoModelForVision2Seq.from_pretrained(
+#             config.qwen_vl_hf_model,
+#             trust_remote_code=True
+#         )
+        # Load DINO ViT-S/16 as the image encoder
+        self.patch_embeddings = ViTModel.from_pretrained(config.vision_model)
         self.vision_projection = nn.Linear(1280, config.hidden_size)  # Project Qwen2.5-VL output to GPT-2 hidden size
 
 
@@ -66,10 +68,10 @@ class DTrOCRModel(nn.Module):
         else:
             past_length = past_key_values[0][0].size(-2)
 
-        # Vision encoding with Qwen2.5-VL
+        # Vision encoding with DINO ViT
         if past_length == 0:
-            vision_outputs = self.patch_embeddings(pixel_values)  # [batch_size, num_patches, 1280]
-            patch_embeddings = self.vision_projection(vision_outputs.last_hidden_state)  # Project to hidden_size
+            vision_outputs = self.patch_embeddings(pixel_values)  # [batch_size, 65, 384] for 128x128
+            patch_embeddings = self.vision_projection(vision_outputs.last_hidden_state)  # [batch_size, 65, 768]
         else:
             patch_embeddings = None
         token_embeddings = self.token_embedding(input_ids)
@@ -78,7 +80,7 @@ class DTrOCRModel(nn.Module):
 
         # Debugging shapes
         if patch_embeddings is not None:
-            print("Shape of patch embeddings:", patch_embeddings.shape)  # e.g., [batch_size, 196, 768]
+            print("Shape of patch embeddings:", patch_embeddings.shape)  # e.g., [batch_size, 65, 768]
             print("Shape of token embeddings:", token_embeddings.shape)  # e.g., [batch_size, seq_len, 768]
         if patch_embeddings is not None:
             patch_and_token_embeddings = torch.concat([patch_embeddings, token_embeddings], dim=-2)
