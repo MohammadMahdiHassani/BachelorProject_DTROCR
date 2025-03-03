@@ -34,6 +34,7 @@ class DTrOCRProcessor:
         texts: Union[str, List[str]] = None,
         return_labels: bool = False,
         input_data_format: str = 'channels_last',
+        return_tensors: str = 'pt',  # Default to 'pt', but allow override
         padding: Union[bool, str] = False,
         *args,
         **kwargs
