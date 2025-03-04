@@ -46,7 +46,7 @@ class DTrOCRProcessor:
         image_inputs = self.image_processor(
             images,
             input_data_format=input_data_format,
-            **kwargs
+            *args, **kwargs
         ) if images is not None else None
 
         return DTrOCRProcessorOutput(
