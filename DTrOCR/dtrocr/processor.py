@@ -49,6 +49,9 @@ class DTrOCRProcessor:
             *args, **kwargs
         ) if images is not None else None
 
+        if image_inputs is not None:
+            print(f"Pixel values shape in processor: {image_inputs['pixel_values'].shape}")
+
         return DTrOCRProcessorOutput(
             pixel_values=image_inputs["pixel_values"] if image_inputs is not None else None,
             input_ids=text_inputs['input_ids'] if texts is not None else None,
