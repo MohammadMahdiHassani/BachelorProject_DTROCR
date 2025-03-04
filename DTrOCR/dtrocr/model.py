@@ -33,7 +33,7 @@ class DTrOCRModel(nn.Module):
 #         )
         # Load DINO ViT-S/16 as the image encoder
         self.patch_embeddings = ViTModel.from_pretrained(config.vision_model)
-        self.vision_projection = nn.Linear(1280, config.hidden_size)  # Project Qwen2.5-VL output to GPT-2 hidden size
+        self.vision_projection = nn.Linear(384, config.hidden_size)  # Project Qwen2.5-VL output to GPT-2 hidden size
 
 
         # embeddings

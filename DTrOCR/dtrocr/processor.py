@@ -46,11 +46,17 @@ class DTrOCRProcessor:
         image_inputs = self.image_processor(
             images,
             input_data_format=input_data_format,
+            size={"height": self.config.image_size[0], "width": self.config.image_size[1]},
             *args, **kwargs
         ) if images is not None else None
 
         if image_inputs is not None:
-            print(f"Pixel values shape in processor: {image_inputs['pixel_values'].shape}")
+            pixel_values = image_inputs["pixel_values"]
+            print(f"Pixel values shape before fix: {pixel_values.shape}")
+            if input_data_format == 'channels_last':
+                pixel_values = pixel_values.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+            print(f"Pixel values shape after fix: {pixel_values.shape}")
+            image_inputs["pixel_values"] = pixel_values
 
         return DTrOCRProcessorOutput(
             pixel_values=image_inputs["pixel_values"] if image_inputs is not None else None,
