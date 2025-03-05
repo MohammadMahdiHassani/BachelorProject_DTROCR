@@ -33,7 +33,7 @@ class DTrOCRProcessor:
         images: Union[Image.Image, List[Image.Image]] = None,
         texts: Union[str, List[str]] = None,
         return_labels: bool = False,
-        input_data_format: str = 'channels_last',
+        input_data_format: str = 'channels_fisrt',
         padding: Union[bool, str] = False,
         *args,
         **kwargs
