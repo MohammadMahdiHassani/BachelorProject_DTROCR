@@ -46,7 +46,7 @@ class DTrOCRProcessor:
         image_inputs = self.image_processor(
             images,
             input_data_format=input_data_format,
-            size={"height": 448, "width": 448},
+            size={"height": self.image_processor.size["height"], "width": self.image_processor.size["width"]},
             *args, **kwargs
         ) if images is not None else None
 
